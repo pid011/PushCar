@@ -3,46 +3,65 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using MySql.Data.MySqlClient;
 
-namespace PushCar.Server
+internal class Program
 {
-    internal class Program
+    private static void Main()
     {
-        private static void Main()
+        // 서버 소켓이 동작하는 스레드
+        var serverThread = new Thread(serverFunc);
+        serverThread.IsBackground = true;
+        serverThread.Start();
+        Thread.Sleep(500); // 소켓 서버용 스레드가 실행될 시간을 주기 위해
+
+        Console.WriteLine("*** 자동차 게임을 위한 게임 서버 입니다. ***");
+        Console.WriteLine("종료하려면 아무 키나 누르세요...");
+        Console.ReadLine();
+    }
+
+    private static void serverFunc(object obj)
+    {
+        var srvSocket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        var endPoint = new IPEndPoint(IPAddress.Any, 10200);
+
+        srvSocket.Bind(endPoint);
+
+        var recvBytes = new byte[1024];
+        EndPoint clientEP = new IPEndPoint(IPAddress.None, 0);
+
+        while (true)
         {
-            var serverThread = new Thread(ServerFunc)
+            var nRecv = srvSocket.ReceiveFrom(recvBytes, ref clientEP);
+            var txt = Encoding.UTF8.GetString(recvBytes, 0, nRecv).Split(";;");
+            Console.WriteLine("- 게임 유저가 보내온 기록 : " + txt[1]);
+
+            var connection = new MySqlConnection("Server=localhost;Database=ckgame;Uid=root;Pwd=root;");
+            try
             {
-                IsBackground = true
-            };
+                connection.Open();
+                var sqlAddCommand = new MySqlCommand($"INSERT INTO cargame VALUES ('{txt[0]}', '{txt[1]}')", connection);
+                sqlAddCommand.ExecuteNonQuery();
 
-            serverThread.Start();
+                var sqlGetCommand = new MySqlCommand($"SELECT * FROM cargame ORDER BY result;", connection);
+                var sqlReader = sqlGetCommand.ExecuteReader();
 
-            Thread.Sleep(500);
+                var sb = new StringBuilder();
+                while (sqlReader.Read())
+                {
+                    sb.AppendLine($"{sqlReader["userid"]} : {sqlReader["result"]}");
+                }
 
-            Console.WriteLine("종료하려면 아무 키나 누르세요...");
-            Console.ReadLine();
-        }
+                byte[] sendBytes = Encoding.UTF8.GetBytes(sb.ToString());
+                srvSocket.SendTo(sendBytes, clientEP);
 
-        private static void ServerFunc(object obj)
-        {
-            Socket serverSocket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            IPEndPoint endPoint = new(IPAddress.Any, 10200);
-
-            serverSocket.Bind(endPoint);
-
-            var recvBytes = new byte[1024];
-            EndPoint clientEp = new IPEndPoint(IPAddress.None, 0);
-
-            while (true)
+                connection.Close();
+            }
+            catch (Exception e)
             {
-                int nrecv = serverSocket.ReceiveFrom(recvBytes, ref clientEp);
-                string txt = Encoding.UTF8.GetString(recvBytes, 0, nrecv);
-                txt = $"{txt}";
-                Console.WriteLine(txt);
-
-                byte[] sendBytes = Encoding.UTF8.GetBytes(txt);
-                serverSocket.SendTo(sendBytes, clientEp);
+                Console.WriteLine(e.StackTrace);
             }
         }
     }
 }
+
